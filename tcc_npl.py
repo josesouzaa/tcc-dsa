@@ -50,28 +50,6 @@ df.drop(
 
 df["text_raw"] = df["text_raw"].fillna("").astype(str)
 
-# %% Encontrado as palavras que não estão presentes no vacabulário e precisam ser substituidas
-
-
-def get_words_to_replace(df):
-    words = " ".join([word for line in df for word in line.lower().split()])
-
-    doc = nlp(words)
-    words_to_replace = set(
-        [
-            token.text
-            for token in doc
-            if token.is_oov
-            and not token.is_stop
-            and not token.is_punct
-            and not token.is_space
-            and token.is_alpha
-        ]
-    )
-    return words_to_replace
-
-
-words_to_replace = list(get_words_to_replace(df["text_raw"]))
 
 # %% DEFININDO E ADICIONANDO STOPWORDS E OBJETO DE SUBSTITUIÇÕES
 
@@ -97,7 +75,7 @@ substitutions = {
     "pra": "para",
 }
 
-# %% LIMPEZA DAS POSTAGENS (PRÉ-PROCESSAMENTO)
+# %% PRÉ-PROCESSAMENTO
 
 
 # Tokenizando as palavras e fazendo substituições
@@ -120,15 +98,60 @@ df_tokens["tokens"] = df["text_raw"].apply(get_tokens)
 
 
 # Retirando Stopwrds e gerando o texto lemmatizado
-def text_cleaner(tokens):
+def preprocess_text(tokens):
     text = [token.lemma_ for token in tokens if not token.is_stop]
     return " ".join(text)
 
 
-df["text"] = df_tokens["tokens"].apply(text_cleaner)
+df["text"] = df_tokens["tokens"].apply(preprocess_text)
 df["text_list"] = df["text"].apply(
     lambda text: text.split() if isinstance(text, str) else []
 )
+
+# %% PALAVRAS MAIS FREQUENTES (BAG OF WORDS)
+
+
+def prepare_words_data(text_series):
+    bag_of_words = " ".join(text_series)
+
+    count_of_words = Counter(bag_of_words.split())
+
+    words = [i[0] for i in count_of_words.most_common(20)]
+    frequency = [i[1] for i in count_of_words.most_common(20)]
+    return bag_of_words, words, frequency
+
+
+def visualize_words_analysis(text_series):
+    bag_of_words, words, frequency = prepare_words_data(text_series)
+
+    wordcloud = WordCloud(
+        width=800, height=400, background_color="white", min_font_size=10
+    ).generate(bag_of_words)
+
+    plt.figure(figsize=(15, 9), dpi=300, facecolor=None)
+    plt.imshow(wordcloud, interpolation="bilinear")
+    plt.axis("off")
+    plt.tight_layout(pad=0)
+    plt.show()
+
+    plt.figure(figsize=(15, 9), dpi=300)
+    plot = sns.barplot(
+        x=words,
+        y=frequency,
+        palette="viridis",
+        hue=words,
+        legend=False,
+    )
+
+    for container in plot.containers:
+        plot.bar_label(container, padding=3, fontsize=10)
+
+    plt.xlabel("Palavras", fontsize=11)
+    plt.ylabel("Frequência", fontsize=11)
+    plt.show()
+
+
+visualize_words_analysis(df["text"])
 
 
 # %% ANÁLISE DE PRIMEIRA E TERCEIRA PESSOA
@@ -144,43 +167,13 @@ def get_words_for_person(df, person: int = 1):
     return words
 
 
-def person_viz(words):
-    wordcloud = WordCloud(
-        width=800, height=400, background_color="white", min_font_size=10
-    ).generate(" ".join([word for word in words]))
-
-    plt.figure(figsize=(15, 9), dpi=300, facecolor=None)
-    plt.imshow(wordcloud, interpolation="bilinear")
-    plt.axis("off")
-    plt.tight_layout(pad=0)
-    plt.show()
-
-    count_words = Counter(words)
-
-    plt.figure(figsize=(15, 9), dpi=300)
-    plot = sns.barplot(
-        x=[i[0] for i in count_words.most_common(20)],
-        y=[i[1] for i in count_words.most_common(20)],
-        palette="viridis",
-        hue=[i[0] for i in count_words.most_common(20)],
-        legend=False,
-    )
-
-    for container in plot.containers:
-        plot.bar_label(container, padding=3, fontsize=10)
-
-    plt.xlabel("Palavras", fontsize=11)
-    plt.ylabel("Frequência", fontsize=11)
-    plt.show()
-
-
 words_1_person = get_words_for_person(df_tokens["tokens"], 1)
 words_3_person = get_words_for_person(df_tokens["tokens"], 3)
-person_viz(words_1_person)
-person_viz(words_3_person)
+visualize_words_analysis(words_1_person)
+visualize_words_analysis(words_3_person)
 
 
-def compare_persons(person_1, person_3, df):
+def visualize_person_distribution(person_1, person_3, df):
     words = [
         token.text
         for tokens in df
@@ -200,14 +193,14 @@ def compare_persons(person_1, person_3, df):
     plt.show()
 
 
-compare_persons(words_1_person, words_3_person, df_tokens["tokens"])
+visualize_person_distribution(words_1_person, words_3_person, df_tokens["tokens"])
 
-# GERANDO AS VARIAVEIS DE 1 PESSOA E 3 PESSOA
+# GERANDO A VARIÁVEL DE 1 PESSOA E 3 PESSOA
 
 
-def get_person_var(text):
+def count_person_usage(tokens):
     person_1, person_3 = 0, 0
-    for token in text:
+    for token in tokens:
         if "Person=1" in token.morph:
             person_1 += 1
         elif "Person=3" in token.morph:
@@ -215,90 +208,47 @@ def get_person_var(text):
     return [person_1, person_3]
 
 
-df["person"] = df_tokens["tokens"].apply(get_person_var)
+df["person"] = df_tokens["tokens"].apply(count_person_usage)
 
 
 # %% ANÁLISE DE VERBOS
 
 
 def get_verbs(df):
-    words = [token.lemma_ for tokens in df for token in tokens if token.pos_ == "VERB"]
-    return words
+    verbs = [token.lemma_ for tokens in df for token in tokens if token.pos_ == "VERB"]
+    return verbs
 
 
 verbs = get_verbs(df_tokens["tokens"])
 
-person_viz(verbs)
+visualize_words_analysis(verbs)
 
-# %% PALAVRAS MAIS FREQUENTES (BAG OF WORDS)
-
-bag_of_words = " ".join(df["text"])
-
-count_of_words = Counter(bag_of_words.split())
-
-words = [i[0] for i in count_of_words.most_common(20)]
-frequency = [i[1] for i in count_of_words.most_common(20)]
-
-
-# VISUALIZAÇÃO BAG OF WORDS
-def words_viz(bag_of_words, words, frequency):
-    wordcloud = WordCloud(
-        width=800, height=400, background_color="white", min_font_size=10
-    ).generate(bag_of_words)
-
-    plt.figure(figsize=(15, 9), dpi=300, facecolor=None)
-    plt.imshow(wordcloud, interpolation="bilinear")
-    plt.axis("off")
-    plt.tight_layout(pad=0)
-    plt.show()
-
-    # GRÁFICO - 20 PALAVRAS MAIS FREQUENTES
-    plt.figure(figsize=(15, 9), dpi=300)
-    plot = sns.barplot(
-        x=words,
-        y=frequency,
-        palette="viridis",
-        hue=words,
-        legend=False,
-    )
-
-    for container in plot.containers:
-        plot.bar_label(container, padding=3, fontsize=10)
-
-    plt.xlabel("Palavras", fontsize=11)
-    plt.ylabel("Frequencia", fontsize=11)
-    plt.show()
-
-
-words_viz(bag_of_words, words, frequency)
 
 # %% DEFININDO N-GRAMS
 
 
-def get_n_gram(n_gram):
-    vectorizer = CountVectorizer(
-        ngram_range=(n_gram, n_gram), stop_words=list(stopwords)
-    )
+def get_ngram_frequencies(ngram):
+    vectorizer = CountVectorizer(ngram_range=(ngram, ngram), stop_words=list(stopwords))
 
     X = vectorizer.fit_transform(df["text"])
 
     feature_names = vectorizer.get_feature_names_out()
 
-    df_n_gram_counts = pd.DataFrame(X.toarray(), columns=feature_names)
+    df_ngram_counts = pd.DataFrame(X.toarray(), columns=feature_names)
 
-    frequencies = df_n_gram_counts.sum().sort_values(ascending=False)
+    frequencies = df_ngram_counts.sum().sort_values(ascending=False)
 
     return frequencies
 
 
-bigram_frequencies = get_n_gram(2)
-trigram_frequencies = get_n_gram(3)
+bigram_frequencies = get_ngram_frequencies(2)
+trigram_frequencies = get_ngram_frequencies(3)
 
 
 # %% VISUALIZAÇÃO N-GRAMS
 
 
-def n_gram_viz(frequencies, n_gram):
+def visualize_ngram_analysis(frequencies, n_gram):
     plt.figure(figsize=(15, 9), dpi=300)
     plot = sns.barplot(
         x=frequencies.head(10).values,
@@ -316,8 +266,8 @@ def n_gram_viz(frequencies, n_gram):
     plt.show()
 
 
-n_gram_viz(bigram_frequencies, "Bigrama")
-n_gram_viz(trigram_frequencies, "Trigrama")
+visualize_ngram_analysis(bigram_frequencies, "Bigrama")
+visualize_ngram_analysis(trigram_frequencies, "Trigrama")
 
 
 # %% VETOR E KMEANS SOMENTE TEXTO
@@ -345,9 +295,34 @@ def elbow_method(X):
 
 
 # CLUSTERIZANDO AS POSTAGENS
-def clustering(X, n_clusters):
+def perform_cluster_analysis(X, n_clusters):
     kmeans = KMeans(n_clusters=n_clusters, init="k-means++", max_iter=300, n_init=10)
     df["cluster"] = kmeans.fit_predict(X)
+
+    results = {}
+    cluster_words_data = {}
+
+    for cluster_id in sorted(df["cluster"].unique()):
+        cluster_df = df[df["cluster"] == cluster_id]
+        _, words, frequency = prepare_words_data(cluster_df["text"])
+
+        cluster_words_data[cluster_id] = {
+            "num_items": cluster_df.shape[0],
+            "words": words,
+            "frequency": frequency,
+        }
+
+    results["cluster_words_data"] = cluster_words_data
+
+    # MÉDIA DE PALAVRAS EM 1 E 3 PESSOA POR CLUSTER
+    df["person_1"] = df["person"].apply(lambda x: x[0])
+    df["person_3"] = df["person"].apply(lambda x: x[1])
+
+    person_1_avg = df.groupby("cluster")["person_1"].mean().to_dict()
+    person_3_avg = df.groupby("cluster")["person_3"].mean().to_dict()
+
+    results["person_1_avg"] = person_1_avg
+    results["person_3_avg"] = person_3_avg
 
     # GRÁFICO - NÚMERO DE POSTAGENS POR CLUSTER
     plt.figure(figsize=(15, 9), dpi=300)
@@ -372,30 +347,21 @@ def clustering(X, n_clusters):
     labels = kmeans.labels_
     centroids = kmeans.cluster_centers_
 
-    wcss_por_cluster = []
+    wcss_for_cluster = []
 
     for i in range(kmeans.n_clusters):
         pontos = X_array[labels == i]
         centroide = centroids[i]
         wcss_i = np.sum((pontos - centroide) ** 2)
-        wcss_por_cluster.append(wcss_i)
+        wcss_for_cluster.append(wcss_i)
 
-    print(wcss_por_cluster)
+    results["wcss_for_cluster"] = wcss_for_cluster
 
-    # feature_names = vectorizer.get_feature_names_out()
-
-    # order_centroids = kmeans.cluster_centers_.argsort()[:, ::-1]
-
-    # for i in range(n_clusters):
-    #     print(f"\nCluster {i}:")
-    #     print("Principais termos:", end="")
-    #     for ind in order_centroids[i, :10]:
-    #         print(f" {feature_names[ind]}", end="")
-    #     print()
+    return results
 
 
 elbow_method(X_tfidf)
-clustering(X_tfidf, 6)
+text_clustering_results = perform_cluster_analysis(X_tfidf, 6)
 
 
 # %% VETOR E KMEANS COMBINANDO TEXT COM PERSON
@@ -405,4 +371,4 @@ X_person = np.array(df["person"].tolist())
 X_combined = hstack([X_tfidf, csr_matrix(X_person)])
 
 elbow_method(X_combined)
-clustering(X_combined, 4)
+text_and_person_clustering_results = perform_cluster_analysis(X_combined, 4)
