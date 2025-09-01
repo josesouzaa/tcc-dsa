@@ -14,6 +14,7 @@
 
 # %% IMPORTANDO OS PACOTES
 
+import random
 import pandas as pd
 import numpy as np
 import seaborn as sns
@@ -29,6 +30,9 @@ from sklearn.cluster import KMeans
 from scipy.sparse import hstack, csr_matrix
 
 # %% INSTANCIANDO O SPACY E IMPORTANDO O BANCO DE DADOS
+
+random.seed(30)
+np.random.seed(30)
 
 nlp = spacy.load("pt_core_news_md")
 
@@ -98,12 +102,18 @@ df_tokens["tokens"] = df["text_raw"].apply(get_tokens)
 
 
 # Retirando Stopwrds e gerando o texto lemmatizado
-def preprocess_text(tokens):
+def preprocess_text_lemma(tokens):
     text = [token.lemma_ for token in tokens if not token.is_stop]
     return " ".join(text)
 
 
-df["text"] = df_tokens["tokens"].apply(preprocess_text)
+def preprocess_text_stop(tokens):
+    text = [token.text for token in tokens]
+    return " ".join(text)
+
+
+df["text"] = df_tokens["tokens"].apply(preprocess_text_lemma)
+df["text_stop"] = df_tokens["tokens"].apply(preprocess_text_stop)
 df["text_list"] = df["text"].apply(
     lambda text: text.split() if isinstance(text, str) else []
 )
@@ -162,7 +172,7 @@ def get_words_for_person(df, person: int = 1):
         token.text
         for tokens in df
         for token in tokens
-        if f"Person={person}" in token.morph
+        if f"Person={person}" in token.morph or (token.text == "meu" and person == 1)
     ]
     return words
 
@@ -174,19 +184,20 @@ visualize_words_analysis(words_3_person)
 
 
 def visualize_person_distribution(person_1, person_3, df):
-    words = [
-        token.text
-        for tokens in df
-        for token in tokens
-        if not "Person=1" in token.morph and not "Person=3" in token.morph
-    ]
+    n_words = 0
+    for tokens in df:
+        for token in tokens:
+            n_words += 1
 
+    n_person_1 = len(person_1)
+    n_person_3 = len(person_3)
+    n_words = n_words - (n_person_1 + n_person_3)
     plt.pie(
-        [len(person_1), len(person_3), len(words)],
+        [n_person_1, n_person_3, n_words],
         labels=[
-            f"1 Pessoa, {len(person_1)}",
-            f"3 Pessoa, {len(person_3)}",
-            f"Demais palavras, {len(words)}",
+            f"1 Pessoa, {n_person_1}",
+            f"3 Pessoa, {n_person_3}",
+            f"Demais palavras, {n_words}",
         ],
         autopct="%.0f%%",
     )
@@ -203,6 +214,8 @@ def count_person_usage(tokens):
     for token in tokens:
         if "Person=1" in token.morph:
             person_1 += 1
+        elif token.text == "meu":
+            person_1 += 1
         elif "Person=3" in token.morph:
             person_3 += 1
     return [person_1, person_3]
@@ -210,12 +223,11 @@ def count_person_usage(tokens):
 
 df["person"] = df_tokens["tokens"].apply(count_person_usage)
 
-
 # %% ANÁLISE DE VERBOS
 
 
 def get_verbs(df):
-    verbs = [token.lemma_ for tokens in df for token in tokens if token.pos_ == "VERB"]
+    verbs = [token.text for tokens in df for token in tokens if token.pos_ == "VERB"]
     return verbs
 
 
@@ -227,10 +239,15 @@ visualize_words_analysis(verbs)
 # %% DEFININDO N-GRAMS
 
 
-def get_ngram_frequencies(ngram):
-    vectorizer = CountVectorizer(ngram_range=(ngram, ngram), stop_words=list(stopwords))
+def get_ngram_frequencies(df, ngram, stopword=True):
+    if not stopword:
+        vectorizer = CountVectorizer(ngram_range=(ngram, ngram))
+    else:
+        vectorizer = CountVectorizer(
+            ngram_range=(ngram, ngram), stop_words=list(stopwords)
+        )
 
-    X = vectorizer.fit_transform(df["text"])
+    X = vectorizer.fit_transform(df)
 
     feature_names = vectorizer.get_feature_names_out()
 
@@ -241,8 +258,21 @@ def get_ngram_frequencies(ngram):
     return frequencies
 
 
-bigram_frequencies = get_ngram_frequencies(2)
-trigram_frequencies = get_ngram_frequencies(3)
+bigram_frequencies = get_ngram_frequencies(df["text"], 2)
+trigram_frequencies = get_ngram_frequencies(df["text"], 3)
+
+
+def get_ngram_frequencies_with_target(df, ngram, target):
+    target_frequencies = get_ngram_frequencies(df, ngram, stopword=False)
+
+    filtered = target_frequencies[
+        target_frequencies.index.str.contains(rf"\b{target}\b")
+    ]
+
+    return filtered
+
+
+target_ngram_frequencies = get_ngram_frequencies_with_target(df["text_stop"], 3, "eu")
 
 
 # %% VISUALIZAÇÃO N-GRAMS
@@ -268,6 +298,7 @@ def visualize_ngram_analysis(frequencies, n_gram):
 
 visualize_ngram_analysis(bigram_frequencies, "Bigrama")
 visualize_ngram_analysis(trigram_frequencies, "Trigrama")
+visualize_ngram_analysis(target_ngram_frequencies, "Trigrama: Eu")
 
 
 # %% VETOR E KMEANS SOMENTE TEXTO
@@ -296,7 +327,13 @@ def elbow_method(X):
 
 # CLUSTERIZANDO AS POSTAGENS
 def perform_cluster_analysis(X, n_clusters):
-    kmeans = KMeans(n_clusters=n_clusters, init="k-means++", max_iter=300, n_init=10)
+    kmeans = KMeans(
+        n_clusters=n_clusters,
+        init="k-means++",
+        max_iter=300,
+        n_init=10,
+        random_state=30,
+    )
     df["cluster"] = kmeans.fit_predict(X)
 
     results = {}
